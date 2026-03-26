@@ -37,10 +37,11 @@ const getDirectImageUrl = (url) => {
   return url;
 };
 
-// HELPER: Format Nomor WhatsApp otomatis ke kode negara 62
+// HELPER: Format Nomor WhatsApp otomatis ke kode negara 62 (SUDAH DIPERBAIKI ANTI-CRASH)
 const formatWA = (phone) => {
   if (!phone) return '';
-  let p = phone.replace(/\D/g, ''); // Hapus semua karakter non-angka
+  // Ubah ke String dulu untuk mencegah error jika Spreadsheet mengirim data berupa Angka (Integer)
+  let p = String(phone).replace(/\D/g, ''); 
   if (p.startsWith('0')) p = '62' + p.substring(1);
   return p;
 };
@@ -73,7 +74,15 @@ export default function App() {
       const data = await res.json();
       
       if (data.products && data.products.length > 0) setProducts(data.products);
-      if (data.distributors && data.distributors.length > 0) setDistributors(data.distributors);
+      if (data.distributors && data.distributors.length > 0) {
+         // AUTO-HEAL: Mengamankan database yang belum punya kolom username/password
+         const validDist = data.distributors.map(d => ({
+            ...d,
+            username: d.username || d.area.toLowerCase().replace(/\s/g, ''),
+            password: d.password || 'mitra'
+         }));
+         setDistributors(validDist);
+      }
       if (data.orders) setOrders(data.orders);
       if (data.settings && data.settings.logo) setSiteConfig(data.settings);
     } catch (err) {
@@ -127,7 +136,7 @@ export default function App() {
   const handleTrackOrder = () => {
     if (!trackQuery.trim()) return setTrackResult(null);
     const query = trackQuery.toLowerCase().trim();
-    const result = orders.find(o => o.id.toLowerCase() === query || o.phone.toLowerCase() === query);
+    const result = orders.find(o => o.id.toLowerCase() === query || String(o.phone).toLowerCase() === query);
     setTrackResult(result ? result : 'not_found');
   };
 
@@ -150,14 +159,19 @@ export default function App() {
     setOrders(prev => [newOrder, ...prev]);
     setTrackQuery(orderId); setTrackResult(newOrder);
 
-    saveToSpreadsheet('addOrder', newOrder);
+    // TUNGGU sampai data masuk ke Spreadsheet sebelum redirect WA
+    await saveToSpreadsheet('addOrder', newOrder);
 
     const waText = `*PESANAN BARU DRIZCE*\n\nID: ${orderId}\n\n*Data Pemesan:*\nNama: ${formData.name}\nNo HP: ${formData.phone}\nAlamat: ${formData.address}\nKecamatan: ${formData.kecamatan}\n\n*Detail Pesanan:*\n${cart.map(item => `- ${item.name} x${item.qty} = Rp ${(item.price * item.qty).toLocaleString('id-ID')}`).join('\n')}\n\n*Total Tagihan: Rp ${totalHarga.toLocaleString('id-ID')}*\n\nMohon segera diproses.`;
     const waUrl = `https://wa.me/${formatWA(selectedDistributorObj.phone)}?text=${encodeURIComponent(waText)}`;
     
-    setIsSubmitting(false); setSubmitStatus('Berhasil dialihkan ke WhatsApp!');
+    setIsSubmitting(false); 
+    setSubmitStatus('Berhasil dialihkan ke WhatsApp!');
+    
     setTimeout(() => { setCart([]); setFormData({ name: '', phone: '', address: '', kecamatan: '' }); setSubmitStatus(null); }, 3000);
-    window.open(waUrl, '_blank');
+    
+    // Redirect di tab yang sama untuk mencegah blokir popup browser HP
+    window.location.href = waUrl;
   };
 
   const [alertMsg, setAlertMsg] = useState(null);
