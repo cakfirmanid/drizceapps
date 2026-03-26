@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShoppingCart, MapPin, Truck, CheckCircle, Package, Phone, Search, ChevronRight, Plus, Minus, User, FileText, LogOut, Settings, ListOrdered, Menu, X, BarChart3, Calculator, Edit, Trash2, ChevronLeft, PauseCircle, Send, FileBarChart, Receipt, Bell, Users, RefreshCw } from 'lucide-react';
+import { ShoppingCart, MapPin, Truck, CheckCircle, Package, Phone, Search, ChevronRight, Plus, Minus, User, FileText, LogOut, Settings, ListOrdered, Menu, X, BarChart3, Calculator, Edit, Trash2, ChevronLeft, PauseCircle, Send, FileBarChart, Receipt, Bell, Users, RefreshCw, Filter, Clock, Lock } from 'lucide-react';
 
 // --- KONFIGURASI API SPREADSHEET ---
 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxLxqx4PnD65_tIqQLYdkW489e4dllyFORvtrh32e8DaV_gFM3hu3UP4APCe7fw48aI/exec';
@@ -17,14 +17,15 @@ const KECAMATAN_LAMONGAN = [
 ];
 
 const INITIAL_DISTRIBUTORS = KECAMATAN_LAMONGAN.map((kec, index) => ({
-  id: index + 1, area: kec, name: `DRIZCE ${kec}`, phone: '6281234567890'
+  id: index + 1, area: kec, name: `DRIZCE ${kec}`, phone: '6281234567890', username: kec.toLowerCase().replace(/\s/g, ''), password: 'mitra'
 }));
 
 const INITIAL_CONFIG = {
   logo: 'https://lh3.googleusercontent.com/d/1bBSfC2ruXcXNBoXyMZoLjWnnNMn3CDeD',
   heroImage: 'https://lh3.googleusercontent.com/d/1bBSfC2ruXcXNBoXyMZoLjWnnNMn3CDeD',
   headline: 'Air Sehat, Langsung\nDari Distributor Terdekat',
-  subheadline: 'Pesan mudah, kirim dari distributor terdekat kecamatan Anda. Hexagonal - Bio - Fir.'
+  subheadline: 'Pesan mudah, kirim dari distributor terdekat kecamatan Anda. Hexagonal - Bio - Fir.',
+  adminPassword: 'admin' // Password Admin Disimpan disini
 };
 
 const getDirectImageUrl = (url) => {
@@ -34,6 +35,14 @@ const getDirectImageUrl = (url) => {
     return `https://lh3.googleusercontent.com/d/${id}`;
   }
   return url;
+};
+
+// HELPER: Format Nomor WhatsApp otomatis ke kode negara 62
+const formatWA = (phone) => {
+  if (!phone) return '';
+  let p = phone.replace(/\D/g, ''); // Hapus semua karakter non-angka
+  if (p.startsWith('0')) p = '62' + p.substring(1);
+  return p;
 };
 
 export default function App() {
@@ -60,7 +69,6 @@ export default function App() {
   const fetchAllData = async () => {
     setIsLoadingData(true);
     try {
-      // Endpoint GET ke Google Apps Script (menggunakan param action=getData)
       const res = await fetch(`${GOOGLE_SCRIPT_URL}?action=getData`);
       const data = await res.json();
       
@@ -88,13 +96,11 @@ export default function App() {
     }
   }, [formData.kecamatan, distributors]);
 
-  // SIMPAN DATA KE SPREADSHEET (FUNGSI GLOBAL API)
   const saveToSpreadsheet = async (action, payloadData) => {
     try {
       const formPayload = new FormData();
       formPayload.append('action', action);
       formPayload.append('data', JSON.stringify(payloadData));
-      
       await fetch(GOOGLE_SCRIPT_URL, { method: 'POST', mode: 'no-cors', body: formPayload });
       return true;
     } catch (e) {
@@ -103,17 +109,15 @@ export default function App() {
     }
   };
 
-  // KERANJANG & PESANAN
-  const updateCart = (product, change) => {
+  // KERANJANG (Diperbarui dengan Set Item Manual)
+  const setItemQty = (product, newQty) => {
+    const qty = parseInt(newQty) || 0;
+    if (qty < 0) return;
     setCart(prev => {
+      if (qty === 0) return prev.filter(item => item.id !== product.id);
       const existing = prev.find(item => item.id === product.id);
-      if (existing) {
-        const newQty = existing.qty + change;
-        if (newQty <= 0) return prev.filter(item => item.id !== product.id);
-        return prev.map(item => item.id === product.id ? { ...item, qty: newQty } : item);
-      }
-      if (change > 0) return [...prev, { ...product, qty: 1 }];
-      return prev;
+      if (existing) return prev.map(item => item.id === product.id ? { ...item, qty: qty } : item);
+      return [...prev, { ...product, qty: qty }];
     });
   };
 
@@ -138,21 +142,18 @@ export default function App() {
     const totalHarga = getCartTotal();
 
     const newOrder = {
-      id: orderId,
-      date: new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
-      timestamp: new Date().toISOString(),
-      type: 'online', customer: formData.name, phone: formData.phone, address: formData.address, area: formData.kecamatan,
+      id: orderId, date: new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+      timestamp: new Date().toISOString(), type: 'online', customer: formData.name, phone: formData.phone, address: formData.address, area: formData.kecamatan,
       distributor: selectedDistributorObj.name, itemsText: orderItemsText, total: totalHarga, status: 'proses'
     };
     
     setOrders(prev => [newOrder, ...prev]);
     setTrackQuery(orderId); setTrackResult(newOrder);
 
-    // Push ke Spreadsheet
     saveToSpreadsheet('addOrder', newOrder);
 
     const waText = `*PESANAN BARU DRIZCE*\n\nID: ${orderId}\n\n*Data Pemesan:*\nNama: ${formData.name}\nNo HP: ${formData.phone}\nAlamat: ${formData.address}\nKecamatan: ${formData.kecamatan}\n\n*Detail Pesanan:*\n${cart.map(item => `- ${item.name} x${item.qty} = Rp ${(item.price * item.qty).toLocaleString('id-ID')}`).join('\n')}\n\n*Total Tagihan: Rp ${totalHarga.toLocaleString('id-ID')}*\n\nMohon segera diproses.`;
-    const waUrl = `https://wa.me/${selectedDistributorObj.phone}?text=${encodeURIComponent(waText)}`;
+    const waUrl = `https://wa.me/${formatWA(selectedDistributorObj.phone)}?text=${encodeURIComponent(waText)}`;
     
     setIsSubmitting(false); setSubmitStatus('Berhasil dialihkan ke WhatsApp!');
     setTimeout(() => { setCart([]); setFormData({ name: '', phone: '', address: '', kecamatan: '' }); setSubmitStatus(null); }, 3000);
@@ -163,9 +164,9 @@ export default function App() {
   const alertCustom = (msg) => { setAlertMsg(msg); setTimeout(() => setAlertMsg(null), 3000); };
 
   // --- RENDER MENU ---
-  if (currentView === 'login') return <LoginScreen logo={getDirectImageUrl(siteConfig.logo)} distributors={distributors} onLogin={(role, user) => { setCurrentView(role); setCurrentUser(user); }} onCancel={() => setCurrentView('home')} />;
+  if (currentView === 'login') return <LoginScreen logo={getDirectImageUrl(siteConfig.logo)} siteConfig={siteConfig} distributors={distributors} onLogin={(role, user) => { setCurrentView(role); setCurrentUser(user); }} onCancel={() => setCurrentView('home')} />;
   if (currentView === 'admin') return <AdminDashboard logo={getDirectImageUrl(siteConfig.logo)} siteConfig={siteConfig} orders={orders} products={products} distributors={distributors} setProducts={setProducts} setDistributors={setDistributors} onUpdateConfig={setSiteConfig} onRefreshData={fetchAllData} onSyncData={saveToSpreadsheet} onLogout={() => { setCurrentView('home'); setCurrentUser(null); }} />;
-  if (currentView === 'mitra') return <MitraDashboard logo={getDirectImageUrl(siteConfig.logo)} user={currentUser} products={products} orders={orders} onAddOrder={(newOrder) => { setOrders(prev => [newOrder, ...prev]); saveToSpreadsheet('addOrder', newOrder); }} onUpdateStatus={(id, newStatus) => { setOrders(prev => prev.map(o => o.id === id ? { ...o, status: newStatus } : o)); saveToSpreadsheet('updateOrderStatus', {id, status: newStatus}); }} onRefreshData={fetchAllData} onLogout={() => { setCurrentView('home'); setCurrentUser(null); }} />;
+  if (currentView === 'mitra') return <MitraDashboard logo={getDirectImageUrl(siteConfig.logo)} user={currentUser} products={products} orders={orders} distributors={distributors} onUpdateDistributors={(newList) => { setDistributors(newList); saveToSpreadsheet('saveDistributors', newList); }} onAddOrder={(newOrder) => { setOrders(prev => [newOrder, ...prev]); saveToSpreadsheet('addOrder', newOrder); }} onUpdateStatus={(id, newStatus) => { setOrders(prev => prev.map(o => o.id === id ? { ...o, status: newStatus } : o)); saveToSpreadsheet('updateOrderStatus', {id, status: newStatus}); }} onRefreshData={fetchAllData} onLogout={() => { setCurrentView('home'); setCurrentUser(null); }} />;
 
   // --- HALAMAN UTAMA (LANDING PAGE) ---
   return (
@@ -181,7 +182,7 @@ export default function App() {
               <a href="#produk" className="hover:text-green-600 font-bold">Produk</a>
               <a href="#cara-pesan" className="hover:text-green-600 font-bold">Cara Pesan</a>
               <button onClick={() => setCurrentView('login')} className="bg-green-600 text-white px-5 py-2 rounded-full font-bold hover:bg-green-700 transition shadow-md shadow-green-200 flex items-center gap-2">
-                 <User size={16} /> Login Mitra
+                 <User size={16} /> Login Sistem
               </button>
             </div>
             <div className="md:hidden flex items-center z-50">
@@ -197,7 +198,7 @@ export default function App() {
              <a href="#produk" onClick={() => setIsMobileMenuOpen(false)} className="text-lg font-bold text-gray-800 border-b pb-2 border-gray-50">Produk</a>
              <a href="#cara-pesan" onClick={() => setIsMobileMenuOpen(false)} className="text-lg font-bold text-gray-800 border-b pb-2 border-gray-50">Cara Pesan</a>
              <button onClick={() => {setIsMobileMenuOpen(false); setCurrentView('login');}} className="w-full mt-4 bg-green-600 text-white px-4 py-3.5 rounded-xl font-bold flex justify-center items-center gap-2 shadow-lg shadow-green-200">
-               <User size={18} /> Login Mitra / Admin
+               <User size={18} /> Login Sistem
              </button>
           </div>
         )}
@@ -247,12 +248,13 @@ export default function App() {
                       <h3 className="font-bold text-gray-800 mb-1 text-sm md:text-base leading-tight flex-1">{product.name}</h3>
                       <p className="text-green-600 font-bold mb-3 md:mb-4 text-sm md:text-base">Rp {product.price.toLocaleString('id-ID')} <span className="text-[10px] md:text-xs text-gray-400 font-normal">/ {product.unit}</span></p>
                       {qty === 0 ? (
-                        <button onClick={() => updateCart(product, 1)} className="w-full bg-green-50 text-green-700 py-2 md:py-2.5 rounded-xl font-bold hover:bg-green-600 hover:text-white transition text-xs md:text-sm">+ Tambah</button>
+                        <button onClick={() => setItemQty(product, 1)} className="w-full bg-green-50 text-green-700 py-2 md:py-2.5 rounded-xl font-bold hover:bg-green-600 hover:text-white transition text-xs md:text-sm">+ Tambah</button>
                       ) : (
-                        <div className="flex items-center justify-between bg-gray-50 rounded-xl p-1 md:p-1.5 border border-gray-200">
-                          <button onClick={() => updateCart(product, -1)} className="p-1 md:p-2 hover:bg-white rounded-lg text-gray-600 shadow-sm"><Minus size={14} /></button>
-                          <span className="font-bold text-gray-800 w-6 text-center text-sm">{qty}</span>
-                          <button onClick={() => updateCart(product, 1)} className="p-1 md:p-2 bg-white rounded-lg text-green-600 shadow-sm border border-gray-100"><Plus size={14} /></button>
+                        <div className="flex items-center justify-between bg-green-50/50 rounded-xl p-1 border border-green-200">
+                          <button onClick={() => setItemQty(product, qty - 1)} className="p-2 hover:bg-white rounded-lg text-green-700 shadow-sm"><Minus size={16} /></button>
+                          {/* INPUT MANUAL JUMALAH */}
+                          <input type="number" min="0" value={qty} onChange={(e) => setItemQty(product, e.target.value)} className="w-12 text-center font-bold bg-white border border-gray-200 rounded-lg py-1.5 outline-none focus:border-green-500" />
+                          <button onClick={() => setItemQty(product, qty + 1)} className="p-2 bg-white rounded-lg text-green-600 shadow-sm border border-gray-100"><Plus size={16} /></button>
                         </div>
                       )}
                     </div>
@@ -336,7 +338,15 @@ export default function App() {
                       <div key={item.id} className="flex justify-between items-center text-sm bg-gray-50 p-2 rounded-xl">
                         <div className="flex items-center gap-3">
                           <img src={getDirectImageUrl(item.image)} alt={item.name} className="w-12 h-12 rounded-lg bg-white object-contain border border-gray-200 p-1" />
-                          <div><p className="font-bold text-gray-800">{item.name}</p><p className="text-gray-500 font-bold text-xs">{item.qty} {item.unit}</p></div>
+                          <div>
+                            <p className="font-bold text-gray-800">{item.name}</p>
+                            <p className="text-gray-500 font-bold text-xs mb-1">Rp {item.price.toLocaleString('id-ID')} / {item.unit}</p>
+                            <div className="flex items-center gap-1 bg-white border border-gray-200 rounded-md w-max p-0.5">
+                              <button onClick={() => setItemQty(item, item.qty - 1)} className="px-1 hover:text-green-600"><Minus size={12}/></button>
+                              <input type="number" min="0" value={item.qty} onChange={(e) => setItemQty(item, e.target.value)} className="w-8 text-center text-xs font-bold outline-none no-spinners" />
+                              <button onClick={() => setItemQty(item, item.qty + 1)} className="px-1 hover:text-green-600"><Plus size={12}/></button>
+                            </div>
+                          </div>
                         </div>
                         <p className="font-bold text-green-700">Rp {(item.price * item.qty).toLocaleString('id-ID')}</p>
                       </div>
@@ -391,20 +401,20 @@ export default function App() {
 }
 
 // --- KOMPONEN LOGIN ---
-function LoginScreen({ logo, distributors, onLogin, onCancel }) {
+function LoginScreen({ logo, siteConfig, distributors, onLogin, onCancel }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
 
   const handleLogin = (e) => {
     e.preventDefault();
-    if (username === 'admin' && password === 'admin') {
+    if (username === 'admin' && password === (siteConfig.adminPassword || 'admin')) {
       onLogin('admin', { role: 'admin', name: 'Administrator' });
       return;
     } 
-    const foundDistributor = distributors.find(d => d.area.toLowerCase() === username.toLowerCase());
-    if (foundDistributor && password === 'mitra') {
-      onLogin('mitra', { role: 'mitra', name: foundDistributor.name, area: foundDistributor.area });
+    const foundDistributor = distributors.find(d => (d.username === username) || (d.area.toLowerCase() === username.toLowerCase()));
+    if (foundDistributor && password === foundDistributor.password) {
+      onLogin('mitra', { role: 'mitra', name: foundDistributor.name, area: foundDistributor.area, id: foundDistributor.id });
     } else {
       setError('Akses ditolak. Pastikan username dan password benar.');
     }
@@ -421,7 +431,7 @@ function LoginScreen({ logo, distributors, onLogin, onCancel }) {
         {error && <div className="bg-red-50 text-red-500 p-3 rounded-xl text-sm font-bold mb-4 border border-red-100 text-center">{error}</div>}
         <form onSubmit={handleLogin} className="space-y-4">
           <div>
-            <label className="block text-sm font-bold text-gray-700 mb-1">Username (Area / Admin)</label>
+            <label className="block text-sm font-bold text-gray-700 mb-1">Username / Area</label>
             <input type="text" value={username} onChange={(e)=>setUsername(e.target.value)} className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-green-500 outline-none font-bold" placeholder="Cth: admin / babat / paciran" />
           </div>
           <div>
@@ -481,8 +491,13 @@ function AdminDashboard({ logo, siteConfig, orders, products, setProducts, distr
   const totalGlobalPendapatan = orders.reduce((sum, order) => sum + order.total, 0);
   const allCustomersList = getCustomersList(orders);
 
+  // HITUNG STATUS GLOBAL
+  const countProses = orders.filter(o => o.status === 'proses').length;
+  const countKirim = orders.filter(o => o.status === 'kirim').length;
+  const countSelesai = orders.filter(o => o.status === 'selesai').length;
+
   const handleConfigChange = (e) => setLocalConfig({ ...localConfig, [e.target.name]: e.target.value });
-  const handleSaveConfig = (e) => { e.preventDefault(); onUpdateConfig(localConfig); onSyncData('saveSettings', localConfig); setSaveStatus('Pengaturan berhasil disimpan!'); setTimeout(() => setSaveStatus(''), 3000); };
+  const handleSaveConfig = (e) => { e.preventDefault(); onUpdateConfig(localConfig); onSyncData('saveSettings', localConfig); setSaveStatus('Pengaturan & Password berhasil disimpan!'); setTimeout(() => setSaveStatus(''), 3000); };
   
   const handleSaveProduct = (e) => {
     e.preventDefault(); const fd = new FormData(e.target);
@@ -496,7 +511,7 @@ function AdminDashboard({ logo, siteConfig, orders, products, setProducts, distr
 
   const handleSaveDist = (e) => {
     e.preventDefault(); const fd = new FormData(e.target);
-    const newDist = { id: editDist ? editDist.id : Date.now(), area: fd.get('area'), name: fd.get('name'), phone: fd.get('phone') };
+    const newDist = { id: editDist ? editDist.id : Date.now(), area: fd.get('area'), name: fd.get('name'), phone: fd.get('phone'), username: fd.get('username').toLowerCase().replace(/\s/g, ''), password: fd.get('password') };
     const updatedList = editDist ? distributors.map(d => d.id === editDist.id ? newDist : d) : [...distributors, newDist];
     setDistributors(updatedList); onSyncData('saveDistributors', updatedList); setShowDistModal(false);
   };
@@ -527,8 +542,8 @@ function AdminDashboard({ logo, siteConfig, orders, products, setProducts, distr
               { id: 'laporan', icon: <FileBarChart size={18} className="min-w-max"/>, label: 'Laporan Penjualan' },
               { id: 'pelanggan', icon: <Users size={18} className="min-w-max"/>, label: 'Data Pelanggan' },
               { id: 'produk', icon: <Package size={18} className="min-w-max"/>, label: 'Kelola Produk' },
-              { id: 'distributor', icon: <User size={18} className="min-w-max"/>, label: 'Data Distributor' },
-              { id: 'pengaturan', icon: <Settings size={18} className="min-w-max"/>, label: 'Pengaturan Web' }
+              { id: 'distributor', icon: <User size={18} className="min-w-max"/>, label: 'Data Akun Mitra' },
+              { id: 'pengaturan', icon: <Settings size={18} className="min-w-max"/>, label: 'Pengaturan & Sandi' }
             ].map(menu => (
               <li key={menu.id} onClick={() => {setActiveTab(menu.id); setIsSidebarOpen(false);}} className={`flex gap-3 items-center p-3 rounded-xl cursor-pointer transition ${activeTab === menu.id ? 'text-green-900 bg-white shadow-md' : 'text-green-100 hover:bg-green-800'} ${isCollapsed ? 'justify-center' : ''}`}>
                  {menu.icon} {!isCollapsed && <span className="truncate font-bold">{menu.label}</span>}
@@ -554,18 +569,26 @@ function AdminDashboard({ logo, siteConfig, orders, products, setProducts, distr
           <h1 className="text-2xl font-bold text-gray-800 mb-8 capitalize">{activeTab === 'dashboard' ? 'Ringkasan Sistem' : activeTab.replace('-', ' ')}</h1>
           
           {activeTab === 'dashboard' && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100"><p className="text-gray-500 text-sm font-bold mb-1">Total Pendapatan Global</p><h3 className="text-3xl font-black text-green-600">Rp {totalGlobalPendapatan.toLocaleString('id-ID')}</h3></div>
-                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100"><p className="text-gray-500 text-sm font-bold mb-1">Total Pesanan Tercatat</p><h3 className="text-3xl font-black text-blue-600">{orders.length} Transaksi</h3></div>
-                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100"><p className="text-gray-500 text-sm font-bold mb-1">Total Pelanggan (Unik)</p><h3 className="text-3xl font-black text-purple-600">{allCustomersList.length} Orang</h3></div>
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                   <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100"><p className="text-gray-500 text-sm font-bold mb-1">Total Pendapatan Global</p><h3 className="text-3xl font-black text-green-600">Rp {totalGlobalPendapatan.toLocaleString('id-ID')}</h3></div>
+                   <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100"><p className="text-gray-500 text-sm font-bold mb-1">Total Pesanan Tercatat</p><h3 className="text-3xl font-black text-blue-600">{orders.length} Transaksi</h3></div>
+                   <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100"><p className="text-gray-500 text-sm font-bold mb-1">Total Pelanggan Unik</p><h3 className="text-3xl font-black text-purple-600">{allCustomersList.length} Orang</h3></div>
+              </div>
+              <h2 className="text-lg font-bold text-gray-800">Status Orderan Berjalan</h2>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="bg-yellow-50 p-5 rounded-2xl border border-yellow-200 flex justify-between items-center"><div className="font-bold text-yellow-800">Menunggu Diproses</div><div className="text-2xl font-black text-yellow-700">{countProses}</div></div>
+                  <div className="bg-blue-50 p-5 rounded-2xl border border-blue-200 flex justify-between items-center"><div className="font-bold text-blue-800">Sedang Dikirim</div><div className="text-2xl font-black text-blue-700">{countKirim}</div></div>
+                  <div className="bg-green-50 p-5 rounded-2xl border border-green-200 flex justify-between items-center"><div className="font-bold text-green-800">Selesai</div><div className="text-2xl font-black text-green-700">{countSelesai}</div></div>
+              </div>
             </div>
           )}
 
           {activeTab === 'pelanggan' && (
              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden max-w-6xl mx-auto">
-               <div className="p-6 border-b bg-gray-50/50">
-                 <h3 className="font-bold text-gray-800 text-lg">Database Pelanggan Global</h3>
-                 <p className="text-xs text-gray-500 font-bold">Daftar kontak pelanggan dari seluruh cabang kecamatan.</p>
+               <div className="p-6 border-b bg-gray-50/50 flex justify-between items-center">
+                 <div><h3 className="font-bold text-gray-800 text-lg">Database Pelanggan Global</h3><p className="text-xs text-gray-500 font-bold">Daftar kontak pelanggan dari seluruh cabang kecamatan.</p></div>
+                 <div className="bg-green-100 text-green-800 font-bold px-4 py-2 rounded-xl text-sm">Total: {allCustomersList.length} Pelanggan</div>
                </div>
                <div className="overflow-x-auto">
                  <table className="w-full text-sm text-left">
@@ -577,7 +600,7 @@ function AdminDashboard({ logo, siteConfig, orders, products, setProducts, distr
                        <tr key={i} className="hover:bg-gray-50 transition">
                          <td className="px-6 py-4 font-bold text-gray-800">{c.name}<br/><span className="text-xs text-gray-500 font-normal">{c.totalTrx}x Transaksi</span></td>
                          <td className="px-6 py-4 font-mono text-green-600 font-bold">
-                           <a href={`https://wa.me/${c.phone}`} target="_blank" className="hover:underline flex items-center gap-1"><Phone size={12}/>{c.phone}</a>
+                           <a href={`https://wa.me/${formatWA(c.phone)}`} target="_blank" className="hover:underline flex items-center gap-1"><Phone size={12}/>{c.phone}</a>
                          </td>
                          <td className="px-6 py-4"><span className="font-bold text-gray-700">{c.area}</span><br/><span className="text-xs text-gray-500">{c.address}</span></td>
                          <td className="px-6 py-4 font-black text-green-700">Rp {c.totalBelanja.toLocaleString('id-ID')}</td>
@@ -656,18 +679,23 @@ function AdminDashboard({ logo, siteConfig, orders, products, setProducts, distr
           {activeTab === 'distributor' && (
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden max-w-5xl mx-auto">
                <div className="p-6 border-b flex flex-col md:flex-row gap-4 justify-between md:items-center bg-gray-50/50">
-                 <div><h3 className="font-bold text-gray-800 text-lg">Data Mitra Cabang Lamongan</h3><p className="text-xs text-gray-500 font-bold">Total Ada {distributors.length} Kecamatan Terdaftar.</p></div>
+                 <div><h3 className="font-bold text-gray-800 text-lg">Data Akun & Cabang Mitra</h3><p className="text-xs text-gray-500 font-bold">Kelola daftar cabang, username login, dan sandi mitra.</p></div>
                  <button onClick={()=>{setEditDist(null); setShowDistModal(true)}} className="bg-gray-900 text-white px-5 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2"><Plus size={16}/> Tambah Cabang Manual</button>
                </div>
                <div className="overflow-x-auto max-h-[60vh] custom-scrollbar">
                  <table className="w-full text-sm text-left">
                    <thead className="bg-gray-50 text-gray-600 border-b sticky top-0 z-10">
-                     <tr><th className="px-6 py-4">Kecamatan (Area)</th><th className="px-6 py-4">Nama Toko Mitra</th><th className="px-6 py-4">No WhatsApp</th><th className="px-6 py-4 text-center">Aksi</th></tr>
+                     <tr><th className="px-6 py-4">Kecamatan (Area)</th><th className="px-6 py-4">Akun Mitra</th><th className="px-6 py-4">No WhatsApp</th><th className="px-6 py-4 text-center">Aksi</th></tr>
                    </thead>
                    <tbody className="divide-y divide-gray-100">
                      {distributors.map(dist => (
                        <tr key={dist.id} className="hover:bg-gray-50/50 transition">
-                         <td className="px-6 py-4 font-bold text-gray-800">{dist.area}</td><td className="px-6 py-4 font-bold text-gray-700">{dist.name}</td><td className="px-6 py-4 text-green-600 font-mono font-bold">{dist.phone}</td>
+                         <td className="px-6 py-4 font-bold text-gray-800">{dist.area}</td>
+                         <td className="px-6 py-4">
+                           <div className="font-bold text-gray-700">{dist.name}</div>
+                           <div className="text-xs text-gray-500 mt-1">User: <span className="font-bold text-blue-600">{dist.username}</span> | Pass: <span className="font-bold text-blue-600">{dist.password}</span></div>
+                         </td>
+                         <td className="px-6 py-4 text-green-600 font-mono font-bold">{dist.phone}</td>
                          <td className="px-6 py-4 flex justify-center gap-3"><button onClick={()=>{setEditDist(dist); setShowDistModal(true)}} className="text-blue-600 bg-blue-50 p-2 rounded-lg"><Edit size={16}/></button><button onClick={()=>handleDeleteDist(dist.id)} className="text-red-600 bg-red-50 p-2 rounded-lg"><Trash2 size={16}/></button></td>
                        </tr>
                      ))}
@@ -681,11 +709,21 @@ function AdminDashboard({ logo, siteConfig, orders, products, setProducts, distr
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 md:p-8 max-w-3xl">
               <form onSubmit={handleSaveConfig} className="space-y-6">
                 {saveStatus && <div className="bg-green-100 text-green-800 p-4 rounded-xl font-bold animate-pulse">{saveStatus}</div>}
+                
+                <h3 className="font-bold text-gray-800 text-lg border-b pb-2 mb-4"><Settings className="inline mr-2 text-green-600"/> Tampilan Website</h3>
                 <div><label className="block text-sm font-bold text-gray-700 mb-2">URL Logo (Google Drive)</label><input type="text" name="logo" value={localConfig?.logo || ''} onChange={handleConfigChange} className="w-full px-4 py-3 rounded-xl border border-gray-300 font-bold" /></div>
                 <div><label className="block text-sm font-bold text-gray-700 mb-2">URL Foto Banner (Google Drive)</label><input type="text" name="heroImage" value={localConfig?.heroImage || ''} onChange={handleConfigChange} className="w-full px-4 py-3 rounded-xl border border-gray-300 font-bold" /></div>
                 <div><label className="block text-sm font-bold text-gray-700 mb-2">Headline Utama</label><textarea name="headline" value={localConfig?.headline || ''} onChange={handleConfigChange} rows="2" className="w-full px-4 py-3 rounded-xl border border-gray-300 resize-none font-bold"></textarea></div>
                 <div><label className="block text-sm font-bold text-gray-700 mb-2">Sub-Headline Utama</label><textarea name="subheadline" value={localConfig?.subheadline || ''} onChange={handleConfigChange} rows="2" className="w-full px-4 py-3 rounded-xl border border-gray-300 resize-none font-bold"></textarea></div>
-                <div className="pt-4 border-t"><button type="submit" className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-8 rounded-xl shadow-lg w-full sm:w-auto">Simpan & Sinkronisasi Cloud</button></div>
+                
+                <h3 className="font-bold text-gray-800 text-lg border-b pb-2 mt-8 mb-4"><Lock className="inline mr-2 text-green-600"/> Keamanan Akun Admin</h3>
+                <div className="bg-gray-50 p-4 rounded-xl border border-gray-200">
+                  <label className="block text-sm font-bold text-gray-700 mb-2">Ubah Kata Sandi Admin (Password)</label>
+                  <input type="text" name="adminPassword" value={localConfig?.adminPassword || ''} onChange={handleConfigChange} className="w-full px-4 py-3 rounded-xl border border-gray-300 font-bold" placeholder="Masukkan password admin yang baru" />
+                  <p className="text-xs text-gray-500 mt-2 font-bold">*Sandi ini digunakan bersama dengan username "admin".</p>
+                </div>
+
+                <div className="pt-4 border-t mt-8"><button type="submit" className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-8 rounded-xl shadow-lg w-full sm:w-auto">Simpan & Sinkronisasi Cloud</button></div>
               </form>
             </div>
           )}
@@ -712,13 +750,21 @@ function AdminDashboard({ logo, siteConfig, orders, products, setProducts, distr
 
       {/* MODAL DISTRIBUTOR */}
       {showDistModal && (
-         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-            <div className="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl animate-in fade-in zoom-in">
-               <h2 className="text-xl font-bold text-gray-800 mb-6 border-b pb-3">{editDist ? 'Edit' : 'Tambah'} Area Cabang</h2>
+         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm z-[60]">
+            <div className="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl animate-in fade-in zoom-in overflow-y-auto max-h-[90vh]">
+               <h2 className="text-xl font-bold text-gray-800 mb-4 border-b pb-3">{editDist ? 'Edit' : 'Tambah'} Akun & Cabang</h2>
                <form onSubmit={handleSaveDist} className="space-y-4">
+                  <h3 className="font-bold text-sm text-gray-800"><MapPin size={16} className="inline text-green-600 mr-1"/> Info Cabang</h3>
                   <div><label className="block text-xs font-bold text-gray-600 mb-1">Kecamatan / Area</label><input name="area" defaultValue={editDist?.area || ''} required className="w-full border rounded-xl px-4 py-2.5 font-bold" /></div>
                   <div><label className="block text-xs font-bold text-gray-600 mb-1">Nama Toko Mitra</label><input name="name" defaultValue={editDist?.name || ''} required className="w-full border rounded-xl px-4 py-2.5 font-bold" /></div>
                   <div><label className="block text-xs font-bold text-gray-600 mb-1">No WhatsApp (Penerima Order)</label><input name="phone" defaultValue={editDist?.phone || ''} required className="w-full border rounded-xl px-4 py-2.5 font-bold" /></div>
+                  
+                  <h3 className="font-bold text-sm text-gray-800 border-t pt-4 mt-4"><User size={16} className="inline text-green-600 mr-1"/> Kredensial Login Mitra</h3>
+                  <div className="flex gap-4">
+                    <div className="flex-1"><label className="block text-xs font-bold text-gray-600 mb-1">Username</label><input name="username" defaultValue={editDist?.username || ''} required className="w-full border rounded-xl px-4 py-2.5 font-bold bg-blue-50 text-blue-800 border-blue-200" /></div>
+                    <div className="flex-1"><label className="block text-xs font-bold text-gray-600 mb-1">Password</label><input name="password" defaultValue={editDist?.password || ''} required className="w-full border rounded-xl px-4 py-2.5 font-bold bg-blue-50 text-blue-800 border-blue-200" /></div>
+                  </div>
+
                   <div className="flex gap-3 pt-4 border-t mt-6"><button type="button" onClick={()=>setShowDistModal(false)} className="flex-1 py-3 bg-gray-100 text-gray-700 font-bold rounded-xl">Batal</button><button type="submit" className="flex-1 py-3 bg-gray-900 text-white font-bold rounded-xl shadow-md">Simpan Cloud</button></div>
                </form>
             </div>
@@ -729,7 +775,7 @@ function AdminDashboard({ logo, siteConfig, orders, products, setProducts, distr
 }
 
 // --- KOMPONEN DASHBOARD MITRA ---
-function MitraDashboard({ logo, user, products, orders, onAddOrder, onUpdateStatus, onRefreshData, onLogout }) {
+function MitraDashboard({ logo, user, products, orders, distributors, onUpdateDistributors, onAddOrder, onUpdateStatus, onRefreshData, onLogout }) {
   const [activeTab, setActiveTab] = useState('pesanan');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false); 
@@ -737,21 +783,59 @@ function MitraDashboard({ logo, user, products, orders, onAddOrder, onUpdateStat
   const myOrders = orders.filter(o => o.area === user?.area);
   const onlineOrders = myOrders.filter(o => o.type === 'online');
   const totalPendapatanMitra = myOrders.reduce((sum, order) => sum + order.total, 0);
-  const unprocessedCount = onlineOrders.filter(o => o.status === 'proses').length;
   
-  const mitraCustomersList = getCustomersList(myOrders); // Data Pelanggan Khusus Area Ini
+  // HITUNG STATUS MITRA
+  const countProses = myOrders.filter(o => o.status === 'proses').length;
+  const countKirim = myOrders.filter(o => o.status === 'kirim').length;
+  const countSelesai = myOrders.filter(o => o.status === 'selesai').length;
+  const unprocessedCount = countProses; // Online/POS diproses
+  
+  const mitraCustomersList = getCustomersList(myOrders);
 
+  // STATE FILTER TANGGAL LAPORAN MITRA
+  const [filterStartDate, setFilterStartDate] = useState('');
+  const [filterEndDate, setFilterEndDate] = useState('');
+  const filteredMyOrders = myOrders.filter(o => {
+    if (!filterStartDate || !filterEndDate) return true;
+    const oDate = new Date(o.timestamp); const sDate = new Date(filterStartDate); const eDate = new Date(filterEndDate + 'T23:59:59');
+    return oDate >= sDate && oDate <= eDate;
+  });
+  const filteredMyTotal = filteredMyOrders.reduce((sum, order) => sum + order.total, 0);
+
+  // POS & HOLD STATE
   const [posCart, setPosCart] = useState([]);
   const [posCustomer, setPosCustomer] = useState('');
   const [posWa, setPosWa] = useState('');
   const [posAlamat, setPosAlamat] = useState('');
   const [showCheckoutPopup, setShowCheckoutPopup] = useState(false);
+  
+  const [heldOrders, setHeldOrders] = useState([]); // Array pesanan tertahan
+  const [showHeldModal, setShowHeldModal] = useState(false);
 
-  const addToPosCart = (product) => { setPosCart(prev => { const ex = prev.find(i => i.id === product.id); if (ex) return prev.map(i => i.id === product.id ? { ...i, qty: i.qty + 1 } : i); return [...prev, { ...product, qty: 1 }]; }); };
-  const updatePosQty = (id, change) => { setPosCart(prev => prev.map(item => item.id === id ? { ...item, qty: Math.max(0, item.qty + change) } : item).filter(item => item.qty > 0)); };
+  const setPosItemQty = (product, newQty) => {
+    const qty = parseInt(newQty) || 0;
+    if (qty < 0) return;
+    setPosCart(prev => {
+      if (qty === 0) return prev.filter(item => item.id !== product.id);
+      const existing = prev.find(item => item.id === product.id);
+      if (existing) return prev.map(item => item.id === product.id ? { ...item, qty: qty } : item);
+      return [...prev, { ...product, qty: qty }];
+    });
+  };
   const posTotal = posCart.reduce((sum, item) => sum + (item.price * item.qty), 0);
 
-  const handleHold = () => { if(posCart.length === 0) return alert('Keranjang kasir kosong!'); alert('Pesanan ditahan.'); setPosCart([]); };
+  const handleHold = () => { 
+    if(posCart.length === 0) return alert('Keranjang kasir kosong!'); 
+    setHeldOrders(prev => [...prev, { id: Date.now(), customer: posCustomer || 'Tanpa Nama', wa: posWa, address: posAlamat, cart: posCart, total: posTotal }]);
+    setPosCart([]); setPosCustomer(''); setPosWa(''); setPosAlamat(''); 
+  };
+
+  const resumeHoldOrder = (heldObj) => {
+    setPosCart(heldObj.cart); setPosCustomer(heldObj.customer === 'Tanpa Nama' ? '' : heldObj.customer); setPosWa(heldObj.wa); setPosAlamat(heldObj.address);
+    setHeldOrders(prev => prev.filter(h => h.id !== heldObj.id));
+    setShowHeldModal(false);
+  }
+
   const handleBayarClick = () => { if(posCart.length === 0) return alert('Keranjang kasir kosong!'); setShowCheckoutPopup(true); };
 
   const processCheckout = async (kirimNota) => {
@@ -761,18 +845,29 @@ function MitraDashboard({ logo, user, products, orders, onAddOrder, onUpdateStat
     
     const newPosOrder = { id: orderId, date: new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }), timestamp: new Date().toISOString(), type: 'pos', customer: posCustomer || 'Walk-in (Offline)', phone: posWa || '-', address: posAlamat || 'Pembelian di Tempat', area: user?.area || '-', distributor: user?.name || '-', itemsText: orderItemsText, total: posTotal, status: 'selesai' };
     
-    // Save to App State & Cloud Database Trigger
     onAddOrder(newPosOrder);
 
     if (kirimNota) {
       let text = `*NOTA PEMBELIAN DRIZCE*\n\nNo. Transaksi: ${orderId}\nPelanggan: ${newPosOrder.customer}\n\n*Detail Pesanan:*\n`;
       posCart.forEach(item => { text += `- ${item.name} x${item.qty} = Rp ${(item.price * item.qty).toLocaleString('id-ID')}\n`; });
       text += `\n*Total Tagihan: Rp ${posTotal.toLocaleString('id-ID')}*\n\nTerima kasih telah berbelanja di ${user?.name}!`;
-      let wa = posWa.replace(/[^0-9]/g, ''); if (wa.startsWith('0')) wa = '62' + wa.substring(1);
-      window.open(`https://wa.me/${wa}?text=${encodeURIComponent(text)}`, '_blank');
+      window.open(`https://wa.me/${formatWA(posWa)}?text=${encodeURIComponent(text)}`, '_blank');
     }
     alert(`Pembayaran Berhasil Disimpan ke Cloud!\nTotal: Rp ${posTotal.toLocaleString('id-ID')}`);
     setPosCart([]); setPosCustomer(''); setPosWa(''); setPosAlamat(''); setShowCheckoutPopup(false);
+  };
+
+  // CHANGE PASSWORD HANDLER
+  const [newPassword, setNewPassword] = useState('');
+  const handleChangePassword = (e) => {
+    e.preventDefault();
+    if(!newPassword) return alert('Password baru tidak boleh kosong!');
+    if(window.confirm('Yakin ingin mengganti password login Anda?')) {
+       const updatedList = distributors.map(d => d.id === user.id ? { ...d, password: newPassword } : d);
+       onUpdateDistributors(updatedList);
+       alert('Password berhasil diperbarui di Cloud!');
+       setNewPassword('');
+    }
   };
 
   return (
@@ -787,13 +882,15 @@ function MitraDashboard({ logo, user, products, orders, onAddOrder, onUpdateStat
             {isCollapsed ? <img src={logo} alt="Logo" className="h-8 bg-black p-1 rounded object-contain" /> : <img src={logo} alt="Logo" className="h-10 bg-black p-1 rounded object-contain" />}
             <button onClick={() => setIsSidebarOpen(false)} className="md:hidden text-green-200 hover:text-white"><X size={24}/></button>
           </div>
-          {!isCollapsed && <div className="mb-8 p-4 bg-green-800 rounded-xl border border-green-700 truncate"><p className="text-xs text-green-300">Login sebagai:</p><p className="font-bold text-white truncate">{user?.name}</p></div>}
+          {!isCollapsed && <div className="mb-8 p-4 bg-green-800 rounded-xl border border-green-700 truncate"><p className="text-xs text-green-300">Cabang Mitra:</p><p className="font-bold text-white truncate">{user?.name}</p></div>}
           <ul className="space-y-2">
             {[
+              { id: 'dashboard', icon: <BarChart3 size={18} className="min-w-max"/>, label: 'Overview' },
               { id: 'pesanan', icon: <ListOrdered size={18} className="min-w-max"/>, label: 'Pesanan Online', notif: unprocessedCount },
               { id: 'pos', icon: <Calculator size={18} className="min-w-max"/>, label: 'Kasir (Offline)' },
               { id: 'laporan', icon: <FileBarChart size={18} className="min-w-max"/>, label: 'Laporan Penjualan' },
               { id: 'pelanggan', icon: <Users size={18} className="min-w-max"/>, label: 'Data Pelanggan' },
+              { id: 'sandi', icon: <Lock size={18} className="min-w-max"/>, label: 'Ganti Sandi' },
             ].map(menu => (
                <li key={menu.id} onClick={() => {setActiveTab(menu.id); setIsSidebarOpen(false);}} className={`flex gap-3 items-center p-3 rounded-xl cursor-pointer transition relative ${activeTab === menu.id ? 'text-green-900 bg-white shadow-md' : 'text-green-100 hover:bg-green-800'} ${isCollapsed ? 'justify-center' : ''}`}>
                  {menu.icon} {!isCollapsed && <span className="truncate flex-1 font-bold">{menu.label}</span>}
@@ -817,11 +914,27 @@ function MitraDashboard({ logo, user, products, orders, onAddOrder, onUpdateStat
 
         <div className="flex-1 overflow-auto p-4 md:p-8">
 
+          {activeTab === 'dashboard' && (
+            <div className="space-y-6">
+              <h1 className="text-2xl font-bold text-gray-800 capitalize">Ringkasan Cabang {user?.area}</h1>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                   <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100"><p className="text-gray-500 text-sm font-bold mb-1">Total Pendapatan Anda</p><h3 className="text-3xl font-black text-green-600">Rp {totalPendapatanMitra.toLocaleString('id-ID')}</h3></div>
+                   <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100"><p className="text-gray-500 text-sm font-bold mb-1">Total Pesanan Terselesaikan</p><h3 className="text-3xl font-black text-blue-600">{countSelesai} Transaksi</h3></div>
+              </div>
+              <h2 className="text-lg font-bold text-gray-800">Status Orderan Berjalan</h2>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="bg-yellow-50 p-5 rounded-2xl border border-yellow-200 flex justify-between items-center"><div className="font-bold text-yellow-800">Menunggu Diproses</div><div className="text-2xl font-black text-yellow-700">{countProses}</div></div>
+                  <div className="bg-blue-50 p-5 rounded-2xl border border-blue-200 flex justify-between items-center"><div className="font-bold text-blue-800">Sedang Dikirim</div><div className="text-2xl font-black text-blue-700">{countKirim}</div></div>
+                  <div className="bg-green-50 p-5 rounded-2xl border border-green-200 flex justify-between items-center"><div className="font-bold text-green-800">Selesai</div><div className="text-2xl font-black text-green-700">{countSelesai}</div></div>
+              </div>
+            </div>
+          )}
+
           {activeTab === 'pelanggan' && (
              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden max-w-6xl mx-auto">
-               <div className="p-6 border-b bg-gray-50/50">
-                 <h3 className="font-bold text-gray-800 text-lg">Data Pelanggan Wilayah {user?.area}</h3>
-                 <p className="text-xs text-gray-500 font-bold">Otomatis terangkum dari pesanan Online & Kasir POS.</p>
+               <div className="p-6 border-b bg-gray-50/50 flex justify-between items-center">
+                 <div><h3 className="font-bold text-gray-800 text-lg">Data Pelanggan Wilayah {user?.area}</h3><p className="text-xs text-gray-500 font-bold">Otomatis terangkum dari pesanan Online & Kasir POS.</p></div>
+                 <div className="bg-green-100 text-green-800 font-bold px-4 py-2 rounded-xl text-sm">Total: {mitraCustomersList.length} Pelanggan</div>
                </div>
                <div className="overflow-x-auto">
                  <table className="w-full text-sm text-left">
@@ -832,7 +945,7 @@ function MitraDashboard({ logo, user, products, orders, onAddOrder, onUpdateStat
                      {mitraCustomersList.length === 0 ? <tr><td colSpan="3" className="text-center p-6 font-bold text-gray-500">Belum ada pelanggan terdaftar.</td></tr> : mitraCustomersList.map((c, i) => (
                        <tr key={i} className="hover:bg-gray-50 transition">
                          <td className="px-6 py-4 font-bold text-gray-800">{c.name}<br/><span className="text-xs text-gray-500 font-normal">{c.totalTrx}x Transaksi (Lokasi: {c.address})</span></td>
-                         <td className="px-6 py-4 font-mono text-green-600 font-bold"><a href={`https://wa.me/${c.phone}`} target="_blank" className="hover:underline flex items-center gap-1"><Phone size={12}/>{c.phone}</a></td>
+                         <td className="px-6 py-4 font-mono text-green-600 font-bold"><a href={`https://wa.me/${formatWA(c.phone)}`} target="_blank" className="hover:underline flex items-center gap-1"><Phone size={12}/>{c.phone}</a></td>
                          <td className="px-6 py-4 font-black text-green-700">Rp {c.totalBelanja.toLocaleString('id-ID')}</td>
                        </tr>
                      ))}
@@ -859,7 +972,7 @@ function MitraDashboard({ logo, user, products, orders, onAddOrder, onUpdateStat
                        {onlineOrders.length === 0 ? <tr><td colSpan="5" className="px-6 py-8 text-center text-gray-500 font-bold">Belum ada pesanan online.</td></tr> : onlineOrders.map(order => (
                            <tr key={order.id} className={order.status === 'proses' ? 'bg-yellow-50/30' : ''}>
                              <td className="px-6 py-4 whitespace-nowrap"><span className="font-mono font-bold text-gray-700">{order.id}</span><br/><span className="text-xs text-gray-500 font-bold">{order.date}</span></td>
-                             <td className="px-6 py-4"><p className="font-bold text-gray-800">{order.customer}</p><p className="text-xs text-green-600 mt-1 flex items-center gap-1 font-bold"><Phone size={10}/> {order.phone}</p></td>
+                             <td className="px-6 py-4"><p className="font-bold text-gray-800">{order.customer}</p><a href={`https://wa.me/${formatWA(order.phone)}`} target="_blank" className="text-xs text-green-600 mt-1 flex items-center gap-1 font-bold hover:underline"><Phone size={10}/> {order.phone}</a></td>
                              <td className="px-6 py-4 text-gray-700 font-bold">{order.itemsText}<br/><span className="font-black text-green-600">Rp {order.total.toLocaleString('id-ID')}</span></td>
                              <td className="px-6 py-4 text-gray-600 max-w-xs font-bold">{order.address}</td>
                              <td className="px-6 py-4">
@@ -882,14 +995,19 @@ function MitraDashboard({ logo, user, products, orders, onAddOrder, onUpdateStat
                    <h2 className="text-xl font-bold text-gray-800 mb-4">Kasir / Point of Sale</h2>
                    <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-4">
                       {products.map(p => (
-                         <div key={p.id} onClick={() => addToPosCart(p)} className="bg-white border border-gray-200 p-4 rounded-xl cursor-pointer hover:border-green-500 hover:shadow-md transition active:scale-95 flex flex-col items-center text-center">
-                            <img src={getDirectImageUrl(p.image)} alt={p.name} className="h-24 object-contain mb-3 bg-gray-50 w-full rounded-lg" /><h4 className="font-bold text-gray-800 text-sm mb-1">{p.name}</h4><p className="text-green-600 font-bold text-xs">Rp {p.price.toLocaleString('id-ID')}</p>
+                         <div key={p.id} onClick={() => setPosItemQty(p, (posCart.find(i=>i.id===p.id)?.qty||0)+1)} className="bg-white border border-gray-200 p-4 rounded-xl cursor-pointer hover:border-green-500 hover:shadow-md transition active:scale-95 flex flex-col items-center text-center">
+                            <img src={getDirectImageUrl(p.image)} alt={p.name} className="h-24 object-contain mb-3 bg-gray-50 w-full rounded-lg mix-blend-multiply" /><h4 className="font-bold text-gray-800 text-sm mb-1">{p.name}</h4><p className="text-green-600 font-bold text-xs">Rp {p.price.toLocaleString('id-ID')}</p>
                          </div>
                       ))}
                    </div>
                 </div>
                 <div className="w-full lg:w-[400px] bg-white rounded-2xl shadow-sm border flex flex-col h-full max-h-[85vh]">
-                   <div className="p-4 border-b bg-gray-50 rounded-t-2xl"><h3 className="font-bold text-gray-800 flex items-center gap-2"><Receipt size={18}/> Transaksi</h3></div>
+                   <div className="p-4 border-b bg-gray-50 rounded-t-2xl flex justify-between items-center">
+                      <h3 className="font-bold text-gray-800 flex items-center gap-2"><Receipt size={18}/> Transaksi</h3>
+                      {heldOrders.length > 0 && (
+                         <button onClick={() => setShowHeldModal(true)} className="bg-yellow-100 text-yellow-800 text-xs font-bold px-2 py-1.5 rounded-lg flex items-center gap-1 shadow-sm border border-yellow-200 animate-pulse"><Clock size={12}/> {heldOrders.length} Ditahan</button>
+                      )}
+                   </div>
                    <div className="p-4 border-b space-y-3 bg-gray-50/50">
                       <input type="text" placeholder="Nama Pembeli (Opsional)" value={posCustomer} onChange={(e)=>setPosCustomer(e.target.value)} className="w-full px-3 py-2.5 text-sm border rounded-xl outline-none font-bold" />
                       <input type="tel" placeholder="No WhatsApp (Untuk Kirim Nota)" value={posWa} onChange={(e)=>setPosWa(e.target.value)} className="w-full px-3 py-2.5 text-sm border rounded-xl outline-none font-bold" />
@@ -897,16 +1015,21 @@ function MitraDashboard({ logo, user, products, orders, onAddOrder, onUpdateStat
                    <div className="flex-1 overflow-auto p-4 space-y-4">
                       {posCart.length === 0 ? <div className="text-center text-gray-400 py-10 text-sm font-bold">Keranjang kosong.</div> : posCart.map(item => (
                             <div key={item.id} className="flex justify-between items-center text-sm border-b pb-3">
-                               <div className="flex-1 pr-2"><p className="font-bold text-gray-800 truncate">{item.name}</p><p className="text-green-600 font-bold text-xs">Rp {item.price.toLocaleString('id-ID')}</p></div>
-                               <div className="flex items-center gap-2 bg-gray-50 rounded-lg border p-1"><button onClick={() => updatePosQty(item.id, -1)} className="p-1 hover:bg-white rounded"><Minus size={14}/></button><span className="w-6 font-bold text-center">{item.qty}</span><button onClick={() => updatePosQty(item.id, 1)} className="p-1 hover:bg-white rounded text-green-600"><Plus size={14}/></button></div>
+                               <div className="flex-1 pr-2"><p className="font-bold text-gray-800 truncate">{item.name}</p><p className="text-green-600 font-bold text-xs mb-1">Rp {item.price.toLocaleString('id-ID')} / {item.unit}</p></div>
+                               <div className="flex items-center gap-1 bg-white border border-gray-200 rounded-md p-0.5">
+                                  <button onClick={() => setPosItemQty(item, item.qty - 1)} className="px-1 hover:text-green-600"><Minus size={12}/></button>
+                                  {/* INPUT MANUAL JUMALAH DI POS */}
+                                  <input type="number" min="0" value={item.qty} onChange={(e) => setPosItemQty(item, e.target.value)} className="w-8 text-center text-xs font-bold outline-none bg-transparent" />
+                                  <button onClick={() => setPosItemQty(item, item.qty + 1)} className="px-1 hover:text-green-600"><Plus size={12}/></button>
+                               </div>
                             </div>
                       ))}
                    </div>
                    <div className="p-4 bg-gray-50 rounded-b-2xl border-t">
                       <div className="flex justify-between items-center mb-4"><span className="font-bold text-gray-600">Total</span><span className="text-2xl font-black text-green-700">Rp {posTotal.toLocaleString('id-ID')}</span></div>
                       <div className="flex gap-2">
-                         <button onClick={handleHold} className="flex-1 bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-3 rounded-xl flex justify-center gap-2 text-sm shadow-md"><PauseCircle size={16}/> Hold</button>
-                         <button onClick={handleBayarClick} className="flex-[2] bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-xl flex justify-center gap-2 text-sm shadow-md shadow-green-200"><CheckCircle size={16}/> Simpan & Bayar</button>
+                         <button onClick={handleHold} className="flex-1 bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-3 rounded-xl flex justify-center items-center gap-2 text-sm shadow-md"><PauseCircle size={16}/> Hold</button>
+                         <button onClick={handleBayarClick} className="flex-[2] bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-xl flex justify-center items-center gap-2 text-sm shadow-md shadow-green-200"><CheckCircle size={16}/> Bayar</button>
                       </div>
                    </div>
                 </div>
@@ -916,20 +1039,46 @@ function MitraDashboard({ logo, user, products, orders, onAddOrder, onUpdateStat
           {activeTab === 'laporan' && (
              <div className="bg-white rounded-2xl shadow-sm border p-6 max-w-5xl mx-auto">
                <h2 className="text-xl font-bold text-gray-800 mb-6">Laporan Cloud Area {user?.area}</h2>
+               
+               {/* FILTER TANGGAL KHUSUS MITRA */}
+               <div className="bg-gray-50 border border-gray-200 rounded-2xl p-5 flex flex-col md:flex-row gap-4 items-end mb-6">
+                  <div className="flex-1 w-full"><label className="block text-xs font-bold text-gray-500 mb-1">Dari Tanggal</label><input type="date" value={filterStartDate} onChange={(e)=>setFilterStartDate(e.target.value)} className="w-full border rounded-xl px-4 py-2.5 text-sm font-bold focus:border-green-500 bg-white" /></div>
+                  <div className="flex-1 w-full"><label className="block text-xs font-bold text-gray-500 mb-1">Sampai Tanggal</label><input type="date" value={filterEndDate} onChange={(e)=>setFilterEndDate(e.target.value)} className="w-full border rounded-xl px-4 py-2.5 text-sm font-bold focus:border-green-500 bg-white" /></div>
+                  <div className="w-full md:w-auto"><button onClick={()=>{setFilterStartDate(''); setFilterEndDate('');}} className="w-full bg-white border border-gray-300 hover:bg-gray-100 text-gray-600 font-bold px-6 py-2.5 rounded-xl transition text-sm whitespace-nowrap"><Filter size={16} className="inline mr-1"/> Reset</button></div>
+               </div>
+
                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-                  <div className="bg-green-50 border border-green-100 p-5 rounded-2xl"><p className="text-gray-500 text-sm font-bold mb-2">Pendapatan Terkumpul</p><h3 className="text-3xl font-black text-green-700">Rp {totalPendapatanMitra.toLocaleString('id-ID')}</h3></div>
-                  <div className="bg-blue-50 border border-blue-100 p-5 rounded-2xl"><p className="text-gray-500 text-sm font-bold mb-2">Total Transaksi</p><h3 className="text-3xl font-black text-blue-700">{myOrders.length} Pesanan</h3></div>
+                  <div className="bg-green-50 border border-green-100 p-5 rounded-2xl"><p className="text-gray-500 text-sm font-bold mb-2">Pendapatan Terkumpul</p><h3 className="text-3xl font-black text-green-700">Rp {filteredMyTotal.toLocaleString('id-ID')}</h3></div>
+                  <div className="bg-blue-50 border border-blue-100 p-5 rounded-2xl"><p className="text-gray-500 text-sm font-bold mb-2">Total Transaksi</p><h3 className="text-3xl font-black text-blue-700">{filteredMyOrders.length} Pesanan</h3></div>
                </div>
                <div className="overflow-x-auto">
                  <table className="w-full text-sm text-left text-gray-600">
                    <thead className="bg-gray-50 text-gray-700 border-b"><tr><th className="px-4 py-3">Waktu/ID</th><th className="px-4 py-3">Sumber</th><th className="px-4 py-3">Pelanggan</th><th className="px-4 py-3">Total Harga</th><th className="px-4 py-3">Status</th></tr></thead>
                    <tbody className="divide-y divide-gray-100">
-                     {myOrders.length === 0 ? <tr><td colSpan="5" className="px-4 py-8 text-center font-bold">Belum ada data.</td></tr> : myOrders.map(order => (
+                     {filteredMyOrders.length === 0 ? <tr><td colSpan="5" className="px-4 py-8 text-center font-bold">Belum ada data pada periode ini.</td></tr> : filteredMyOrders.map(order => (
                          <tr key={order.id}><td className="px-4 py-3"><span className="font-mono text-xs font-bold text-gray-700">{order.id}</span><br/><span className="text-xs font-bold text-gray-400">{order.date}</span></td><td className="px-4 py-3">{order.type === 'pos' ? <span className="bg-purple-100 text-purple-700 px-2 py-1 rounded text-[10px] font-bold">POS</span> : <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-[10px] font-bold">WEB</span>}</td><td className="px-4 py-3 font-bold text-gray-800">{order.customer}</td><td className="px-4 py-3 font-bold text-green-600">Rp {order.total.toLocaleString('id-ID')}</td><td className="px-4 py-3 uppercase text-xs font-black">{order.status}</td></tr>
                        ))}
                    </tbody>
                  </table>
                </div>
+             </div>
+          )}
+
+          {activeTab === 'sandi' && (
+             <div className="bg-white rounded-2xl shadow-sm border p-6 md:p-8 max-w-xl mx-auto mt-10">
+               <h2 className="text-xl font-bold text-gray-800 mb-2 flex items-center gap-2"><Lock className="text-green-600" /> Ganti Kata Sandi Cabang</h2>
+               <p className="text-sm text-gray-500 font-bold mb-6 border-b pb-4">Ubah password yang digunakan untuk login ke akun {user?.name}.</p>
+               <form onSubmit={handleChangePassword} className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-bold text-gray-700 mb-1">Username Login (Tidak bisa diubah)</label>
+                    <input type="text" disabled value={distributors.find(d=>d.id===user.id)?.username || ''} className="w-full px-4 py-3 rounded-xl border border-gray-300 font-bold bg-gray-100 text-gray-500 cursor-not-allowed" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-gray-700 mb-1">Password Baru</label>
+                    <input type="text" value={newPassword} onChange={(e)=>setNewPassword(e.target.value)} placeholder="Masukkan password baru Anda" className="w-full px-4 py-3 rounded-xl border border-gray-300 font-bold focus:border-green-500 outline-none" required />
+                  </div>
+                  <button type="submit" className="w-full bg-gray-900 hover:bg-gray-800 text-white font-bold py-3.5 rounded-xl shadow-md mt-4">Simpan Sandi Baru ke Cloud</button>
+               </form>
              </div>
           )}
         </div>
@@ -949,6 +1098,30 @@ function MitraDashboard({ logo, user, products, orders, onAddOrder, onUpdateStat
             </div>
           </div>
         </div>
+      )}
+
+      {/* MODAL HOLD ORDERS (Menampilkan antrean) */}
+      {showHeldModal && (
+         <div className="fixed inset-0 bg-black/60 z-50 flex justify-end backdrop-blur-sm z-[60]">
+            <div className="bg-white w-full max-w-md h-full shadow-2xl animate-in slide-in-from-right-4 flex flex-col">
+               <div className="p-6 border-b flex justify-between items-center bg-gray-50">
+                 <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2"><Clock className="text-yellow-600"/> Pesanan Ditahan</h2>
+                 <button onClick={()=>setShowHeldModal(false)} className="p-2 hover:bg-gray-200 rounded-full"><X size={20}/></button>
+               </div>
+               <div className="flex-1 overflow-auto p-6 space-y-4">
+                 {heldOrders.length === 0 ? <p className="text-center text-gray-500 font-bold mt-10">Tidak ada pesanan yang ditahan.</p> : heldOrders.map(held => (
+                   <div key={held.id} className="bg-white border border-yellow-200 rounded-2xl p-4 shadow-sm relative overflow-hidden">
+                     <div className="absolute top-0 left-0 w-1 h-full bg-yellow-400"></div>
+                     <div className="flex justify-between items-start mb-3 pl-2">
+                       <div><p className="font-bold text-gray-800">{held.customer}</p><p className="text-xs text-gray-500 font-bold">{new Date(held.id).toLocaleTimeString('id-ID')}</p></div>
+                       <div className="text-right"><p className="font-black text-green-700">Rp {held.total.toLocaleString('id-ID')}</p><p className="text-xs text-gray-500 font-bold">{held.cart.reduce((a,b)=>a+b.qty,0)} item</p></div>
+                     </div>
+                     <button onClick={() => resumeHoldOrder(held)} className="w-full bg-yellow-100 hover:bg-yellow-200 text-yellow-800 font-bold py-2 rounded-xl mt-2 flex justify-center items-center gap-2 transition text-sm border border-yellow-300">Panggil & Lanjutkan Bayar <ChevronRight size={14}/></button>
+                   </div>
+                 ))}
+               </div>
+            </div>
+         </div>
       )}
     </div>
   );
